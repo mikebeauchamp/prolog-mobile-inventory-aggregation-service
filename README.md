@@ -8,7 +8,7 @@
 
 **Where to find it**
 
-- [`harness/`](harness/) is a copy of my entire harness: all 22 files from the `.github` folder I used in VS Code (nine agents, `copilot-instructions.md`, seven instruction files and four skills). These are quick, rough copies of what I use at work, refactored for C#. They are here to be read. Copilot only loads them from a folder named `.github`, so they do not run from `harness/`, and a few files still refer to the original `.\.github\...` paths.
+- [`harness/`](harness/) is a copy of my entire harness: all 22 files from the `.github` folder I used in VS Code (nine agents, `copilot-instructions.md`, seven instruction files and four skills). These are quick, rough copies of what I use at work, refactored for C#. They are here to be read. The originals live in the `.github` folder of my workspace, which is why a few files still refer to `.\.github\...` paths.
 - [`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md) is what the planning agent produced: the acceptance criteria, the source contract, the decision register and the AC-to-test mapping.
 - [`docs/IMPLEMENTATION-CHECKLIST.md`](docs/IMPLEMENTATION-CHECKLIST.md) is what the coding agent worked from and ticked off across sessions, including the decisions I approved, the red/green test evidence, and the changes made after the code review.
 
@@ -49,7 +49,11 @@ Use one of these (replace the placeholder with your own key; do not paste a real
 ${env:Prolog-Mobile-API-Key} = "<your key>"
 ```
 
-On Windows you can also add it permanently under _System Properties > Environment Variables_; restart your terminal or editor afterwards so it picks the variable up.
+On Windows you can also add it permanently under _System Properties > Environment Variables_. A terminal that was already open does not see a variable set after it started, so fully close and reopen VS Code (or any terminal) afterwards. To load a permanent (Machine-level) value into the current session without printing it:
+
+```powershell
+${env:Prolog-Mobile-API-Key} = [Environment]::GetEnvironmentVariable("Prolog-Mobile-API-Key", "Machine")
+```
 
 **Option B: .NET user secrets** (local development only; stored outside the repo in your user profile, not encrypted)
 
@@ -67,9 +71,11 @@ Do not put the key in `appsettings*.json`. The files `.env`, `.env.*` and `secre
 dotnet run --project src\InventoryAggregation.Api --launch-profile http
 ```
 
-The app listens on `http://localhost:5261`. `dotnet run` does not open a browser (it ignores `launchBrowser` in the launch profile), so open `http://localhost:5261/api/inventory/categories` yourself once the console says `Now listening`. The first load takes several seconds while the service fetches the whole dataset. The root path `/` has no route and returns 404. The launch profiles are set to open that endpoint for tools that honour `launchBrowser`, such as Visual Studio or `dotnet watch`.
+The app listens on `http://localhost:5261`. `dotnet run` does not open a browser (it ignores `launchBrowser` in the launch profile), so open `http://localhost:5261/api/inventory/categories` yourself once the console says `Now listening`. The root path `/` has no route and returns 404.
 
-The first request fetches the whole dataset from the upstream API one page at a time, so a cold request can take several seconds (about 11 seconds in my one run against the real API). Later requests are served from an in-memory cache for 5 minutes.
+Stop the app with `Ctrl+C`. If the build prints "file is locked" warnings, an earlier instance is still running; stop it first.
+
+The first request fetches the whole dataset from the upstream API one page at a time, so a cold request can take several seconds (about 11 to 12 seconds in my runs against the real API). Later requests are served from an in-memory cache for 5 minutes.
 
 ## The endpoint
 
@@ -122,7 +128,7 @@ Categories are sorted A to Z (ignoring case) and items by `id`. If nothing is in
 
 ### Error responses
 
-Failures return a plain [ProblemDetails](https://www.rfc-editor.org/rfc/rfc9457) JSON body (`status`, `title` and `traceId`, plus a `detail` sentence for upstream failures). Details are logged on the server only; the body never contains stack traces, the API key or upstream URLs.
+Failures return a plain [ProblemDetails](https://www.rfc-editor.org/rfc/rfc9457) JSON body (`status`, `title` and `traceId`, plus a `detail` sentence for upstream failures). Details are logged on the server only. Tests check that error bodies do not contain exception text, stack traces, the API key or the upstream host name.
 
 | Status | When                                                                                                                                                                                                |
 | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -169,7 +175,7 @@ Resilience defaults (set explicitly in code, equal to the official standard-hand
 
 Four projects, split so the business rules can be tested without HTTP and the HTTP code can change without touching the rules:
 
-- **`InventoryAggregation.Core`**: the models (`InventoryRecord`, `CategorySummary`), the `IInventoryRecordSource` abstraction, `InventoryAggregator` (all the grouping and arithmetic) and the typed `InventorySourceException`. It references no HTTP or ASP.NET package, and a test enforces that.
+- **`InventoryAggregation.Core`**: the models (`InventoryRecord`, `CategorySummary`), the `IInventoryRecordSource` abstraction, `InventoryAggregator` (all the grouping and arithmetic) and the typed `InventorySourceException`. It references no HTTP or ASP.NET package, and a test checks the compiled assembly's references.
 - **`InventoryAggregation.Infrastructure`**: everything about talking to the upstream API. `InventoryApiClient` is a typed client from `IHttpClientFactory` with the Microsoft resilience handler (built on Polly v8) and maps every HTTP or transport failure to the typed exception. `InventoryRecordCollector` pages through the dataset one page at a time and refuses to trust a `200`: it checks page echo, stable totals, that the page count matches the record count, the final record count, duplicates and every field. `CachingInventoryRecordSource` wraps the collector with a time-limited cache. Options and validation live here too.
 - **`InventoryAggregation.Api`**: a minimal API with one route. It calls the source, runs the aggregator, shapes the JSON, and turns the typed failures into problem responses.
 - **`tests/InventoryAggregation.Tests`**: xUnit tests for all of the above.
@@ -178,7 +184,7 @@ The flow is: endpoint -> cache -> collector -> client -> upstream API, and the a
 
 ## Judgement calls (open decisions)
 
-The assignment left these open. Each was discussed and approved before it was implemented.
+The assignment left these open. Each was approved by me before it was implemented; the approvals are recorded in `docs/IMPLEMENTATION-PLAN.md` and `docs/IMPLEMENTATION-CHECKLIST.md`.
 
 | ID   | Decision                                                                                                                                                                                                                                                                                                                |
 | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -195,7 +201,7 @@ The assignment left these open. Each was discussed and approved before it was im
 | D-11 | Upstream unavailable is 503, timeout is 504, unusable data or a rejected key is 502, and 500 is only for our own bugs                                                                                                                                                                                                   |
 | D-12 | No GitHub Actions workflow (listed under next steps)                                                                                                                                                                                                                                                                    |
 | D-13 | Up to 3 retries with jittered growing waits, `Retry-After` honoured, 10 s per attempt, 30 s per page. Only transient failures are retried (network errors, timeouts, 408, 429, 5xx). 400, 401, 403 and 404 are never retried                                                                                            |
-| D-14 | `totalPages` must equal ceil(`totalRecords` / 25) (an empty dataset may report 0 or 1 pages); otherwise the data is unusable (502). This bounds the paging loop by the data's own consistency. There is no page cap or overall deadline, and no limit on records per page: the real API returns 26 records on some pages because it repeats an earlier record, which is dropped as an identical duplicate (D-4)                                      |
+| D-14 | `totalPages` must equal ceil(`totalRecords` / 25) (an empty dataset may report 0 or 1 pages); otherwise the data is unusable (502). This bounds the paging loop by the data's own consistency. There is no page cap or overall deadline, and no limit on records per page: the real API returns 26 records on some pages because one record on them repeats an id, and the repeat is dropped as an identical duplicate (D-4)                                      |
 | D-15 | `decimal` overflow while totalling (absurdly large prices or quantities) is treated as unusable upstream data (502), not as a bug in this service (500). There is no maximum price                                                                                                                                      |
 | D-16 | A rejected key (401/403) is logged at Error; other upstream failures stay at Warning. The caller's response is unchanged                                                                                                                                                                                                |
 | D-17 | `InventoryApi:BaseUrl` must be https, except for a local address (`localhost`, `127.0.0.1`, `[::1]`), so the key is never sent in clear text across a network                                                                                                                                                           |
@@ -211,14 +217,14 @@ The assignment left these open. Each was discussed and approved before it was im
 
 **Cache staleness.** Results can be up to 5 minutes old, and the cache is per process, so two instances would each fetch. The dataset is described as static, so this is a performance choice rather than a correctness risk.
 
-**Speed.** Pages are fetched sequentially, so a cold request is slow (about 11 s in my one run against the real API). Parallel fetching is faster but makes the consistency checks harder; I did not measure whether it is needed.
+**Speed.** Pages are fetched sequentially, so a cold request is slow (about 11 to 12 s in my runs against the real API). Parallel fetching is untried: I did not try it or measure whether it is needed, and the real API throttled me at 5 requests per 10 seconds when I called it quickly by hand.
 
 **Resilience caveats.**
 
 - The circuit breaker needs 100 calls in 30 s before it can open. This service makes about one call per page, so in practice it will almost never open. It is configured, and tests lower the thresholds to prove it opens and recovers, but it adds little protection at this volume.
-- A long `Retry-After` counts against the 30 s per-page budget, so a value longer than the remaining budget should end the page as a timeout (504). I did not test that exact case.
+- The 30 s total timeout covers all retries and waits for one page. I did not test what happens when a `Retry-After` value is longer than the time left.
 - Invalid resilience option values fail at startup, not on the first request. I checked 11 invalid values (out-of-range numbers, a total timeout not greater than the attempt timeout, unparsable text); all stopped startup. Most of that validation comes from the resilience library, not from this repository's code.
-- The library defaults come from documentation. Against the real API I observed repeated records (some pages carry one extra, identical record from an earlier page, which the collector drops), a correct `totalPages` for the record count, and throttling at 5 requests per 10 seconds (HTTP 429, seen when I called the API quickly by hand; the service's own retries honour `Retry-After`). I did not observe shifting totals or a failing page. Handling of those cases is covered by tests with fake responses, not by real failures.
+- The library defaults come from documentation. Against the real API I observed repeated ids (pages 2 and 4 of 7 carried one extra record that repeats an id; the collector accepted them, so the content was identical, and drops the repeat), a correct `totalPages` for the record count, and throttling at 5 requests per 10 seconds (HTTP 429, seen when I called the API quickly by hand). The service's retries honour `Retry-After` in tests with a fake handler; I did not check whether the real API sends that header. I did not observe shifting totals or a failing page. Handling of those cases is covered by tests with fake responses, not by real failures.
 
 **Data and display.**
 
@@ -227,6 +233,8 @@ The assignment left these open. Each was discussed and approved before it was im
 - Grouping merges case and spacing variants but not spelling variants (`Electronic` and `Electronics` stay separate).
 - Totals use the upstream `price` as given; no currency handling beyond the contract's "USD".
 - The page-count rule (D-14) assumes the upstream reports `totalPages` as ceil(`totalRecords` / 25). It held against the real API in one run (7 pages for 157 records, HTTP 200, 136 in-stock records, about 12 s cold), and it is covered by tests with fake pages. It does not bound a dishonest upstream that inflates `totalRecords` too, and there is still no overall time limit across pages, only the 30 s per page.
+
+**Tests.** While I was changing code, about 3 of roughly 35 full test runs had one `ConfigTests` startup-failure test fail with an `ObjectDisposedException` instead of the expected `OptionsValidationException`. I never found the cause. It did not recur in 40 consecutive runs of the finished code or in 40 runs of the first commit, so if you see it, it is that test.
 
 **Not done.**
 
@@ -239,7 +247,7 @@ The assignment left these open. Each was discussed and approved before it was im
 1. Add a GitHub Actions workflow that builds and runs the tests on every push (D-12).
 2. Offer an opt-in partial-results mode that reports which pages or records were skipped, for callers who prefer degraded data to an error.
 3. Replace the fixed cache lifetime with background refresh or explicit invalidation, and decide whether a stale copy may be served while a refresh fails.
-4. Measure the cold fetch, and add bounded parallel paging only if it is needed and the consistency checks still hold.
+4. Try parallel page fetching. First measure the cold fetch (about 12 s in my runs). The real API throttled me at 5 requests per 10 seconds when I called it quickly by hand, so parallel requests may trigger that limit, and the consistency checks would have to hold when pages arrive out of order. Cap the parallelism, and keep it only if it is measurably faster.
 5. Add the long-`Retry-After` test.
 6. Add health checks and basic metrics (cache hits, upstream failures by kind).
 7. Add an explicit exceptions list for acronym categories if real ones appear.
