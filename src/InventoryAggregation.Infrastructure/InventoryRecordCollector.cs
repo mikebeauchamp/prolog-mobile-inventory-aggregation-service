@@ -19,6 +19,12 @@ public sealed class InventoryRecordCollector : IInventoryRecordSource
         var totalPages = first.TotalPages!.Value;
         var totalRecords = first.TotalRecords!.Value;
 
+        // The page count is untrusted input that drives the loop below, so it must agree with the record count.
+        if (!PageCountMatches(totalPages, totalRecords))
+        {
+            throw InventoryRecordValidator.BadData("totalPages does not match totalRecords for the requested page size.");
+        }
+
         var recordsById = new Dictionary<long, InventoryRecord>();
         AddRecords(recordsById, first, 1);
 
@@ -65,6 +71,12 @@ public sealed class InventoryRecordCollector : IInventoryRecordSource
 
         return dto;
     }
+
+    // An empty dataset may be reported as zero pages or as one empty page.
+    private static bool PageCountMatches(int totalPages, int totalRecords) =>
+        totalRecords == 0
+            ? totalPages is 0 or 1
+            : totalPages == (totalRecords - 1) / PageSize + 1;
 
     private static void AddRecords(Dictionary<long, InventoryRecord> recordsById, InventoryPageDto dto, int page)
     {

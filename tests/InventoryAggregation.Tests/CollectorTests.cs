@@ -18,6 +18,19 @@ public class CollectorTests
     private static InventoryPageDto Page(int page, int? totalPages, int? totalRecords, params InventoryRecordDto?[] records) =>
         new(records, page, InventoryRecordCollector.PageSize, totalPages, totalRecords);
 
+    private static InventoryRecordDto[] Dtos(int firstId, int count) =>
+        Enumerable.Range(firstId, count).Select(id => Dto(id)).ToArray();
+
+    // A consistent dataset of ids 1..totalRecords, split into pages of PageSize.
+    private static FakePageClient Dataset(int totalRecords)
+    {
+        var totalPages = totalRecords == 0 ? 0 : (totalRecords - 1) / InventoryRecordCollector.PageSize + 1;
+        var pages = Enumerable.Range(1, Math.Max(totalPages, 1)).Select(page =>
+            Page(page, totalPages, totalRecords, Dtos((page - 1) * InventoryRecordCollector.PageSize + 1,
+                Math.Max(0, Math.Min(InventoryRecordCollector.PageSize, totalRecords - (page - 1) * InventoryRecordCollector.PageSize)))));
+        return new FakePageClient(pages.ToArray());
+    }
+
     private static async Task<InventorySourceException> AssertBadData(Func<Task> act)
     {
         var ex = await Assert.ThrowsAsync<InventorySourceException>(act);
@@ -31,23 +44,19 @@ public class CollectorTests
     [Fact]
     public async Task FetchesAllPages_InOrder()
     {
-        var client = new FakePageClient(
-            Page(1, 3, 5, Dto(1), Dto(2)),
-            Page(2, 3, 5, Dto(3), Dto(4)),
-            Page(3, 3, 5, Dto(5)));
+        var client = Dataset(51);
 
         var result = await Collect(client);
 
         Assert.Equal([1, 2, 3], client.RequestedPages);
         Assert.All(client.RequestedPageSizes, size => Assert.Equal(25, size));
-        Assert.Equal([1L, 2, 3, 4, 5], result.Select(r => r.Id));
+        Assert.Equal(Enumerable.Range(1, 51).Select(i => (long)i), result.Select(r => r.Id));
     }
 
     [Fact]
     public async Task FetchesPagesOneAtATime()
     {
-        var client = new FakePageClient(
-            Page(1, 3, 3, Dto(1)), Page(2, 3, 3, Dto(2)), Page(3, 3, 3, Dto(3)));
+        var client = Dataset(51);
 
         await Collect(client);
 
@@ -122,12 +131,12 @@ public class CollectorTests
     public async Task IdenticalDuplicateIsDropped()
     {
         var client = new FakePageClient(
-            Page(1, 2, 3, Dto(1), Dto(2)),
-            Page(2, 2, 3, Dto(2), Dto(3)));
+            Page(1, 2, 26, Dtos(1, 25)),
+            Page(2, 2, 26, Dto(25), Dto(26)));
 
         var result = await Collect(client);
 
-        Assert.Equal([1L, 2, 3], result.Select(r => r.Id));
+        Assert.Equal(Enumerable.Range(1, 26).Select(i => (long)i), result.Select(r => r.Id));
     }
 
     [Fact]
@@ -143,12 +152,14 @@ public class CollectorTests
     [Fact]
     public async Task DuplicatesCountOnceTowardsTotalRecords()
     {
-        // totalRecords includes the duplicate, so after dropping it the count no longer matches.
+        // totalRecords (27) includes the duplicate, so after dropping it only 26 distinct records remain.
         var client = new FakePageClient(
-            Page(1, 2, 4, Dto(1), Dto(2)),
-            Page(2, 2, 4, Dto(2), Dto(3)));
+            Page(1, 2, 27, Dtos(1, 25)),
+            Page(2, 2, 27, Dto(25), Dto(26)));
 
-        await AssertBadData(() => Collect(client));
+        var ex = await AssertBadData(() => Collect(client));
+
+        Assert.Contains("distinct", ex.Message);
     }
 
     [Theory]
@@ -167,7 +178,7 @@ public class CollectorTests
             "quantity" => Dto(1, quantity: 99),
             _ => Dto(1, lastUpdated: "2027-01-01T00:00:00Z"),
         };
-        var client = new FakePageClient(Page(1, 2, 2, Dto(1)), Page(2, 2, 2, other));
+        var client = new FakePageClient(Page(1, 2, 26, Dtos(1, 25)), Page(2, 2, 26, other));
 
         var ex = await AssertBadData(() => Collect(client));
 
@@ -175,51 +186,104 @@ public class CollectorTests
     }
 
     [Theory]
-    [InlineData(4)]
-    [InlineData(2)]
+    [InlineData(26)]
+    [InlineData(50)]
     public async Task TotalRecordsMismatchFails(int reportedTotal)
     {
+        // 30 distinct records arrive; both reported totals still need 2 pages, so only the final count check can reject them.
         var client = new FakePageClient(
-            Page(1, 2, reportedTotal, Dto(1), Dto(2)),
-            Page(2, 2, reportedTotal, Dto(3)));
+            Page(1, 2, reportedTotal, Dtos(1, 25)),
+            Page(2, 2, reportedTotal, Dtos(26, 5)));
 
-        await AssertBadData(() => Collect(client));
+        var ex = await AssertBadData(() => Collect(client));
+
+        Assert.Contains("distinct", ex.Message);
+    }
+
+    [Theory]
+    [InlineData(1, 1)]
+    [InlineData(1, 25)]
+    [InlineData(2, 26)]
+    [InlineData(2, 50)]
+    [InlineData(3, 51)]
+    public async Task TotalPagesMatchingTotalRecordsIsAccepted(int totalPages, int totalRecords)
+    {
+        var client = Dataset(totalRecords);
+
+        var result = await Collect(client);
+
+        Assert.Equal(totalRecords, result.Count);
+        Assert.Equal(Enumerable.Range(1, totalPages), client.RequestedPages);
+    }
+
+    [Theory]
+    [InlineData(4, 3)]
+    [InlineData(2, 25)]
+    [InlineData(1, 26)]
+    [InlineData(5000, 1)]
+    [InlineData(2, 0)]
+    [InlineData(0, 1)]
+    public async Task TotalPagesInconsistentWithTotalRecordsFails_BeforeFetchingMore(int totalPages, int totalRecords)
+    {
+        var client = new FakePageClient(Page(1, totalPages, totalRecords, Dtos(1, Math.Min(totalRecords, 25))));
+
+        var ex = await AssertBadData(() => Collect(client));
+
+        Assert.Contains("totalPages", ex.Message);
+        Assert.Equal([1], client.RequestedPages);
+    }
+
+    [Fact]
+    public async Task PageHoldingAnExtraDuplicateRecord_IsAccepted()
+    {
+        // The live API returns 26 records on some pages: one is an identical repeat of a record from an earlier page.
+        // 50 distinct records need 2 pages, so the totals are consistent once the repeat is dropped.
+        var client = new FakePageClient(
+            Page(1, 2, 50, Dtos(1, 25)),
+            Page(2, 2, 50, Dtos(25, 26)));
+
+        var result = await Collect(client);
+
+        Assert.Equal(Enumerable.Range(1, 50).Select(i => (long)i), result.Select(r => r.Id));
+        Assert.Equal([1, 2], client.RequestedPages);
     }
 
     [Fact]
     public async Task MissingPageFails()
     {
-        // The API reports 3 pages, but the middle page comes back empty.
+        // The API reports 3 pages (51 records), but the middle page comes back empty.
         var client = new FakePageClient(
-            Page(1, 3, 3, Dto(1)),
-            Page(2, 3, 3),
-            Page(3, 3, 3, Dto(3)));
+            Page(1, 3, 51, Dtos(1, 25)),
+            Page(2, 3, 51),
+            Page(3, 3, 51, Dto(51)));
 
-        await AssertBadData(() => Collect(client));
+        var ex = await AssertBadData(() => Collect(client));
+
+        Assert.Contains("distinct", ex.Message);
     }
 
     [Fact]
     public async Task TotalPagesChangeFails()
     {
         var client = new FakePageClient(
-            Page(1, 2, 2, Dto(1)),
-            Page(2, 3, 2, Dto(2)));
+            Page(1, 2, 26, Dtos(1, 25)),
+            Page(2, 3, 26, Dto(26)));
 
         var ex = await AssertBadData(() => Collect(client));
 
-        Assert.Contains("totalPages", ex.Message);
+        Assert.Contains("totalPages changed", ex.Message);
     }
 
     [Fact]
     public async Task TotalRecordsChangeFails()
     {
         var client = new FakePageClient(
-            Page(1, 2, 2, Dto(1)),
-            Page(2, 2, 3, Dto(2)));
+            Page(1, 2, 26, Dtos(1, 25)),
+            Page(2, 2, 27, Dto(26)));
 
         var ex = await AssertBadData(() => Collect(client));
 
-        Assert.Contains("totalRecords", ex.Message);
+        Assert.Contains("totalRecords changed", ex.Message);
     }
 
     [Theory]
@@ -228,13 +292,13 @@ public class CollectorTests
     public async Task PageEchoMismatchFails(int mismatchedPage)
     {
         var client = new FakePageClient(
-            Page(1, 2, 2, Dto(1)),
-            Page(2, 2, 2, Dto(2)));
+            Page(1, 2, 26, Dtos(1, 25)),
+            Page(2, 2, 26, Dto(26)));
         client.Override(mismatchedPage, p => p with { Page = 7 });
 
         var ex = await AssertBadData(() => Collect(client));
 
-        Assert.Contains("page", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("different page number", ex.Message);
     }
 
     [Theory]
@@ -298,7 +362,7 @@ public class CollectorTests
     [Fact]
     public async Task StopsAtFirstFailedPage()
     {
-        var client = new FakePageClient(Page(1, 4, 4, Dto(1)));
+        var client = new FakePageClient(Page(1, 4, 76, Dtos(1, 25)));
         client.FailOn(2, new InventorySourceException(InventorySourceFailureKind.Unavailable, "boom"));
 
         var ex = await Assert.ThrowsAsync<InventorySourceException>(() => Collect(client));
@@ -310,10 +374,11 @@ public class CollectorTests
     [Fact]
     public async Task InvalidRecordOnFirstPageStopsBeforeFetchingMore()
     {
-        var client = new FakePageClient(Page(1, 3, 3, Dto(1, name: "")));
+        var client = new FakePageClient(Page(1, 3, 51, Dto(1, name: "")));
 
-        await AssertBadData(() => Collect(client));
+        var ex = await AssertBadData(() => Collect(client));
 
+        Assert.Contains("blank name", ex.Message);
         Assert.Equal([1], client.RequestedPages);
     }
 }

@@ -21,13 +21,28 @@ public static class InventoryEndpoints
         try
         {
             var records = await source.GetAllRecordsAsync(cancellationToken);
-            return Results.Ok(CategoriesResponse.From(aggregator.Aggregate(records)));
+            return Results.Ok(CategoriesResponse.From(Aggregate(aggregator, records)));
         }
         catch (InventorySourceException ex)
         {
             // Details stay in the server log; the caller only gets a generic problem response (D-11, P-3).
-            logger.LogWarning(ex, "Inventory source failed ({Kind}).", ex.Kind);
+            // A rejected key needs an operator to fix it, so it is logged as an error rather than a warning (D-16).
+            var level = ex.Kind == InventorySourceFailureKind.Rejected ? LogLevel.Error : LogLevel.Warning;
+            logger.Log(level, ex, "Inventory source failed ({Kind}).", ex.Kind);
             return ProblemFor(ex.Kind);
+        }
+    }
+
+    // decimal arithmetic throws on overflow instead of saturating, so absurdly large upstream values are treated as unusable data (D-15).
+    private static IReadOnlyList<CategorySummary> Aggregate(InventoryAggregator aggregator, IReadOnlyList<InventoryRecord> records)
+    {
+        try
+        {
+            return aggregator.Aggregate(records);
+        }
+        catch (OverflowException ex)
+        {
+            throw new InventorySourceException(InventorySourceFailureKind.BadData, "Inventory values are too large to total.", ex);
         }
     }
 

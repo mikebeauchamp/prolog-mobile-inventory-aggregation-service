@@ -3,10 +3,10 @@
 Tick each item when done. Read the "Rules" section first. All decisions D-1 to D-13 are approved (see IMPLEMENTATION-PLAN.md); do not change them without asking the user first.
 
 ## Rules
-- [ ] Never open, print or commit the API key. It lives in user secrets / an environment variable only.
-- [ ] Never commit, push or create PRs without the user's explicit approval.
-- [ ] Any new design choice (default, limit, timeout, behaviour) must be shown to the user and approved before implementing.
-- [ ] Temporary files (logs, test output, screenshots) go in a unique OS temp folder outside the repo and are cleaned up. Delete only exact paths you created.
+- [x] Never open, print or commit the API key. It lives in user secrets / an environment variable only. (Honoured: the key was only copied between environment scopes in memory; a pre-commit scan found it in no staged file.)
+- [x] Never commit, push or create PRs without the user's explicit approval. (One commit, `03a05f2` (amended from `0415a6a`; the amend only added a `.gitignore` line and removed the PDF from the commit, source files unchanged), made after the user's explicit approval on 2026-11-20; nothing pushed, no PR.)
+- [x] Any new design choice (default, limit, timeout, behaviour) must be shown to the user and approved before implementing. (P-1 to P-5 each approved before implementation. Smaller implementation interpretations are listed under Phase 3, for example the status-code mapping and the no-redirect rule; they were reported, not separately approved.)
+- [x] Temporary files (logs, test output, screenshots) go in a unique OS temp folder outside the repo and are cleaned up. Delete only exact paths you created. (Cleaned and verified gone.)
 - [x] Delete the `.playwright-mcp` folder if it exists and make sure it is not committed. (Verified absent with a glob; also listed in `.gitignore`.)
 
 ## Approved decisions (reference)
@@ -17,7 +17,7 @@ The upstream contract and the expected response shape are in IMPLEMENTATION-PLAN
 - [x] Source contract extracted from the PDF and added to the plan (section 1a)
 - [x] .NET 10 SDK (10.0.404) installed with winget (user-approved); .NET 8.0.101 is still installed alongside
 - [x] Temporary PDF-extraction tooling (`.pdf-tools`) deleted and verified gone
-- Handoff note: Phases 1 to 6 are written; what is left is (a) the clean-clone verification of the README steps and of `dotnet test` (Phase 5 and 6 last items) and (b) the Final section. `README.md` exists in the repo root. The user must approve before any git commit; a clean clone needs a commit, otherwise use a clean copy of the tree without `bin`, `obj` and `.git` and say so. 170 tests green; 100% line and branch coverage on Core, Infrastructure, Api. Use the terminal for `dotnet` commands; keep test output in a temp folder outside the repo (`dotnet test --results-directory <temp>`; the current run folder path is in `%TEMP%\invagg-run.txt`, and that folder plus that file must be deleted at the end). Never read the API key (do not run `dotnet user-secrets list`); to pass it to a locally started app, copy it from the Machine variable into the child process environment without printing it. Nothing has been committed. Tip for editing: `create` cannot overwrite; use `edit` for existing files.
+- Handoff note: All phases are complete and the Final section is ticked. One commit exists (`03a05f2`); the checklist edits made after it are uncommitted until the user approves a second commit. Nothing is pushed. 170 tests green (195 after the review changes below); 100% line and branch coverage on Core, Infrastructure, Api. Open items for the user: trim the README architecture note if half a page matters; run the exact `dotnet run --launch-profile http` command once (it opens a browser); optionally decide whether to keep the assignment PDF in `docs\`. No temp folders remain (`%TEMP%\invagg-*` pointer files were deleted). Never read the API key (do not run `dotnet user-secrets list`). Tip for editing: `create` cannot overwrite; use `edit` for existing files.
 - Reading of D-5 applied (not a new decision): zero-quantity records are excluded first, then grouped, so the display name comes from the lowest-id *available* record.
 
 ## Open decision register (awaiting user approval; do not implement past this)
@@ -60,7 +60,7 @@ The upstream contract and the expected response shape are in IMPLEMENTATION-PLAN
 - [x] Checks: identical duplicate dropped; conflicting duplicate fails; collected count equals `totalRecords`; `totalPages`/`totalRecords` stable; page number echoed correctly; invalid records per D-6 (`lastUpdated` without an offset is read as UTC, as the contract says the field is UTC)
 - [x] All failures become `InventorySourceException` with a kind (Unavailable / Timeout / BadData / Rejected); no raw exception escapes the client
 - Interpretations of D-11 applied (tell the user; change only with approval): HTTP 401/403 -> Rejected; 408 and 504 -> Timeout; 429 and other 5xx -> Unavailable; every other non-success (400, 404, 3xx...) -> BadData; circuit open or rate-limiter rejection -> Unavailable; `HttpClient`'s own timeout -> Timeout. Redirects are never followed (`AllowAutoRedirect = false`) so the key cannot be sent to another host. An API key containing control characters fails startup with a clear message.
-- Known limits to document in the README: the circuit breaker (minimum throughput 100) practically never opens at this call volume; a `Retry-After` longer than the remaining 30 s page budget ends the page as a timeout (not separately tested); resilience option values are not validated at startup (the Polly options validation runs when the client is first built)
+- Known limits to document in the README: the circuit breaker (minimum throughput 100) practically never opens at this call volume; a `Retry-After` longer than the remaining 30 s page budget ends the page as a timeout (not separately tested); no startup validation is written in this repository for the resilience options, but invalid values still fail at startup (observed for 11 invalid values: the resilience library validates its own options on start, and unparsable text fails at binding)
 
 ## Phase 4 – Endpoint, cache and errors (AC-9, 10, 11)
 - [x] `GET /api/inventory/categories` returns the PDF's sample shape (camelCase, UTC dates with Z): proved by `EndpointTests.Returns200_WithSampleShape`, which compares the whole body with the assignment's sample. Observed in red/green: a `DateTimeOffset` was written as `+00:00` and kept non-UTC offsets, so the response uses UTC `DateTime` values (written as `Z`). The plan's "unverified" claim about `Z` dates was therefore true for `DateTimeOffset` and is fixed.
@@ -79,7 +79,7 @@ The upstream contract and the expected response shape are in IMPLEMENTATION-PLAN
 - [x] Cache tests (hit, failure not cached, shared fetch, TTL 0): `CacheTests`, 12 tests
 - [x] Config test: missing key fails startup (`ConfigTests`, 15 tests including bad base URL, control characters, environment variable, cache TTL)
 - [x] Failing-without-the-fix proof, all three observed and restored: zero-quantity filter weakened -> 6 aggregator tests failed; conflict check disabled -> 5 collector tests failed; retries disabled -> 18 client/collector tests failed. Each was reverted and 123 tests pass again.
-- [ ] `dotnet test` green from a clean clone (green in the working tree; clean-clone run happens at the end)
+- [x] `dotnet test` green from a clean clone: cloned commit `0415a6a` (since amended to `03a05f2`; source identical) into a temp folder, `dotnet build` 0 warnings and 0 errors, `dotnet test` 170 passed with no key in the environment, coverage 100% line and 100% branch on Core, Infrastructure and Api. The temp clone was deleted.
 - Red evidence recorded this phase: collector 49/49 failed against a stub; client 37 failed and 2 passed against a stub (the 2 are characterization: `MissingFields_AreLeftNull` and `AppliesTheApprovedResilienceValues`, which holds because the library defaults equal the approved values); the new control-character test failed 3/3 before the validator rule.
 - Coverage-gap tests written after the code (characterization, passed immediately): `HttpClientOwnTimeout_BecomesTimeout`.
 
@@ -90,10 +90,38 @@ The upstream contract and the expected response shape are in IMPLEMENTATION-PLAN
 - [x] Architecture note: what each project does and why it is split there (the README section is somewhat longer than half a page; trim if the assignment's length matters)
 - [x] Assumptions and known limitations: strictness, no partial mode, cache staleness, sequential fetch speed, circuit breaker rarely opens, long `Retry-After` untested, unverified library behaviour, title-casing limits, no auth/HTTPS redirection/health checks
 - [x] What I would do next: GitHub Actions CI, partial-results opt-in, cache invalidation, parallel fetch if measured, startup validation of resilience options, health checks and metrics, acronym exceptions
-- [ ] Verify the README steps on a clean clone (needs a commit or a clean copy; a git commit requires the user's approval, so the agent will ask, or use a clean copy of the tree without `bin`, `obj` and `.git`)
+- [x] Verify the README steps on a clean clone: in the clone of commit `0415a6a` (since amended to `03a05f2`; source identical), build and tests pass; starting the app without a key fails with "Prolog-Mobile-API-Key is not configured..." and prints no value; with the key (copied from the Machine variable into the child process, never printed) the endpoint returned 200 with 5 categories. Not exercised: the exact `--launch-profile http` command (it opens a browser; the same startup was run with `--no-launch-profile` and `ASPNETCORE_ENVIRONMENT=Development`).
 
 ## Final
-- [ ] No secrets anywhere in the repo or history
-- [ ] All 26 acceptance criteria covered
-- [ ] Temporary artifacts cleaned and verified gone
-- [ ] Summary for the user: decisions implemented, deviations, anything unverified
+- [x] No secrets anywhere in the repo or history: before the commit, every staged text file was compared with the real key value (the value was never printed) and none matched; no `.env`, key or certificate file names were staged; the history is one commit. The PDF could not be text-scanned (compressed), but the assignment says the key is provided separately.
+- [x] All 26 acceptance criteria covered (table below)
+- [x] Temporary artifacts cleaned and verified gone: run folder, clone folder, clone results folder and the two pointer files in `%TEMP%`; no `.playwright-mcp` or `.pdf-tools` in the repo; the dummy user secret used for the README check was removed; app processes stopped and ports 5261 to 5263 free
+- [x] Summary for the user: given in the final message of this session
+
+### AC coverage (evidence from the current tree)
+| AC | Evidence |
+|---|---|
+| 1-6 | `AggregatorTests` (zero quantity, grouping, exact totals and rounding, count, most-recent and tie, items match figures, ordering) |
+| 7 | `CollectorTests.FetchesAllPages_InOrder`, `EndpointTests` end-to-end through the real client; real API returned 136 in-stock items |
+| 8, 10, 21, 23-25 | `README.md` (manual review against the checklist; steps run on a clean clone except the launch-profile command). The architecture note is about a page rather than half a page |
+| 9, 10 | `EndpointTests.Returns200_WithSampleShape` compares the whole body with the assignment sample |
+| 11, 18 | `EndpointTests` (502, 503, 504, 500, upstream statuses, unreachable upstream) and `ClientTests` |
+| 12 | .NET 10 (`net10.0` in all four projects) |
+| 13-15 | `ClientTests`, `EndpointTests.ServicesResolve_ThroughTheContainer` (typed client from `IHttpClientFactory`, async with cancellation, constructor injection) |
+| 16 | `AggregatorTests.Core_HasNoHttpReference`; the aggregator runs on plain records |
+| 17 | `ConfigTests` (missing key, bad values never printed, environment variable); `.gitignore`; pre-commit secret scan |
+| 19, 20 | `AggregatorTests`; `ClientTests` (retries, `Retry-After` with a fake clock, 400/401 not retried, timeouts, transport errors, circuit breaker opens and recovers) |
+| 22 | Git repository with one commit (`03a05f2`) that builds and runs from a clean clone. The history is a single commit, not a progression |
+| 26 | `CollectorTests` (duplicates, conflicting duplicates, `totalRecords` and `totalPages` changes, page echo, each invalid field, stop at first failure, page count versus record count, page carrying an extra duplicate record) |
+
+## Post-review changes (code review of commit `03a05f2`; uncommitted)
+Decisions D-14 to D-17 approved by the user on 2026-11-20 ("i approve"); D-18 skipped by decision. Full wording is in IMPLEMENTATION-PLAN.md section 3.
+
+- [x] D-14 `InventoryRecordCollector`: page count must match record count. A first version also rejected pages above 25 records (7 new tests red first, then green). **That second rule was wrong:** a live run returned 502 ("Page 2 holds more than the requested 25 records") because the real API returns 26-record pages that include one repeated record (seen on pages 2 and 4 of 7). It was removed with the user's approval; red proof: `PageHoldingAnExtraDuplicateRecord_IsAccepted` failed with that exact message before the removal. Lesson: the fake-data tests could not have caught this; only the live run did. 11 existing fixtures with contradictory totals were made consistent and several that had started passing for the wrong reason were given message assertions.
+- [x] D-15 `InventoryEndpoints.Aggregate`: `OverflowException` becomes `BadData` (502). Red: 2 new endpoint tests returned 500.
+- [x] D-16 `InventoryEndpoints`: rejected key logged at Error, other failures at Warning. Red: 1 new test (the three Warning cases passed immediately as characterization).
+- [x] D-17 `InventoryApiOptionsValidator`: plain `http` allowed only for loopback. Red: 2 new config cases failed (loopback and https cases passed immediately as characterization).
+- [x] Evidence: 194 tests pass, 0 warnings; coverage 100% line and 100% branch on Api, Core and Infrastructure (re-measured after the page-size rule was removed). Earlier 40-run stability result was for the 195-test version.
+- [x] Live check of the final working tree against the real Inventory API: HTTP 200 in about 12 s, 5 categories, 136 in-stock records, per-category values identical to the committed version `03a05f2`.
+- [ ] Observed and unresolved: while 11 tests were failing mid-change, 3 of about 35 full runs had one `ConfigTests` startup-failure test throw `ObjectDisposedException` instead of `OptionsValidationException` (`WebApplicationFactory.CreateClient`). It did not recur in 40 runs of the green tree or 40 runs of the original commit. Cause unknown; do not assume it is fixed.
+- Documentation corrected in the same pass: the claim that resilience options are not validated at startup was wrong (observed: 11 invalid values all stop startup), the commit hash, and the plan's stale status.

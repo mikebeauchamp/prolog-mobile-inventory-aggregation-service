@@ -369,20 +369,32 @@ public class ClientTests
     [Fact]
     public async Task Collector_GathersAllPages_ThroughTheRealClient()
     {
-        static string PageBody(int page) =>
-            $$"""{"records":[{"id":{{page}},"name":"P{{page}}","category":"Books","price":2.5,"quantity":4,"lastUpdated":"2026-10-15T12:30:00Z"}],"page":{{page}},"pageSize":25,"totalPages":3,"totalRecords":3}""";
-
         using var h = ClientHarness.Create(request =>
         {
             var page = int.Parse(System.Web.HttpUtility.ParseQueryString(request.RequestUri!.Query)["page"]!);
-            return Steps.Ok(PageBody(page))(request, CancellationToken.None);
+            return Steps.Ok(PageBodies.Books(page, totalRecords: 51))(request, CancellationToken.None);
         });
 
         var source = h.Provider.GetRequiredService<IInventoryRecordSource>();
         var records = await source.GetAllRecordsAsync(CancellationToken.None);
 
-        Assert.Equal([1L, 2, 3], records.Select(r => r.Id));
+        Assert.Equal(Enumerable.Range(1, 51).Select(i => (long)i), records.Select(r => r.Id));
         Assert.Equal(3, h.Handler.Calls);
+    }
+}
+
+// Consistent upstream pages of 25 records each: id, quantity 4 and price 2.5 for every record.
+internal static class PageBodies
+{
+    public static string Books(int page, int totalRecords)
+    {
+        const int pageSize = 25;
+        var totalPages = (totalRecords - 1) / pageSize + 1;
+        var first = (page - 1) * pageSize + 1;
+        var last = Math.Min(page * pageSize, totalRecords);
+        var records = string.Join(",", Enumerable.Range(first, last - first + 1).Select(id =>
+            $$"""{"id":{{id}},"name":"P{{id}}","category":"Books","price":2.5,"quantity":4,"lastUpdated":"2026-10-15T12:30:00Z"}"""));
+        return $$"""{"records":[{{records}}],"page":{{page}},"pageSize":{{pageSize}},"totalPages":{{totalPages}},"totalRecords":{{totalRecords}}}""";
     }
 }
 
@@ -454,20 +466,28 @@ internal sealed class CapturingLoggerProvider : ILoggerProvider
 {
     public ConcurrentQueue<string> Messages { get; } = new();
 
-    public ILogger CreateLogger(string categoryName) => new CapturingLogger(Messages);
+    public ConcurrentQueue<(string Category, LogLevel Level)> Entries { get; } = new();
+
+    public ILogger CreateLogger(string categoryName) => new CapturingLogger(categoryName, Messages, Entries);
 
     public void Dispose()
     {
     }
 
-    private sealed class CapturingLogger(ConcurrentQueue<string> messages) : ILogger
+    private sealed class CapturingLogger(
+        string category,
+        ConcurrentQueue<string> messages,
+        ConcurrentQueue<(string Category, LogLevel Level)> entries) : ILogger
     {
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
         public bool IsEnabled(LogLevel logLevel) => true;
 
-        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
             messages.Enqueue(formatter(state, exception) + exception);
+            entries.Enqueue((category, logLevel));
+        }
     }
 }
 

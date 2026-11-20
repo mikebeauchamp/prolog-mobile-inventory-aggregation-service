@@ -81,6 +81,8 @@ public class ConfigTests
     [InlineData("not a url")]
     [InlineData("/relative/path")]
     [InlineData("ftp://stg.prologmobile.com/")]
+    [InlineData("http://stg.prologmobile.com/")]
+    [InlineData("http://192.168.1.20:8080/")]
     public void InvalidBaseUrl_FailsStartup_WithoutPrintingValues(string baseUrl)
     {
         using var factory = FactoryWith(
@@ -95,6 +97,22 @@ public class ConfigTests
         {
             Assert.DoesNotContain(baseUrl, ex.Message);
         }
+    }
+
+    [Theory]
+    [InlineData("http://localhost:5000/")]
+    [InlineData("http://127.0.0.1:5000/")]
+    [InlineData("http://[::1]:5000/")]
+    [InlineData("https://stg.prologmobile.com/")]
+    public void LoopbackHttpAndAnyHttps_BaseUrlStarts(string baseUrl)
+    {
+        using var factory = FactoryWith(
+            (InventoryApiOptions.ApiKeySettingName, SecretLookingValue),
+            ("InventoryApi:BaseUrl", baseUrl));
+
+        using var client = factory.CreateClient();
+
+        Assert.Equal(baseUrl, factory.Services.GetRequiredService<IOptions<InventoryApiOptions>>().Value.BaseUrl);
     }
 
     [Theory]

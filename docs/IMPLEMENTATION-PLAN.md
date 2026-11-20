@@ -1,7 +1,7 @@
 # Implementation Plan – Inventory Aggregation Service
 
 Source: "Take-Home Assignment – Inventory Aggregation Service" (PrologMobile, 2026-11-17).
-Status: plan only. All decisions below were approved by the user. Do not change them without asking.
+Status: implemented; this document records the plan and its approved decisions. All decisions below were approved by the user. Do not change them without asking.
 
 ## 1. Acceptance criteria (26, derived from the PDF)
 
@@ -127,6 +127,16 @@ Decisions added during implementation (all approved by the user; full wording is
 | P-4 | The API key is read only from the top-level setting `Prolog-Mobile-API-Key` (user secret or environment variable). `InventoryApi:ApiKey` is no longer read |
 | P-5 | The category display name is title-cased (invariant culture), e.g. `TOYS` becomes `Toys`, `home & kitchen` becomes `Home & Kitchen`. Acronyms are not preserved (`TV` becomes `Tv`) |
 
+Decisions added after the code review (all approved by the user on 2026-11-20 with "i approve", after the recommendations were shown with Microsoft Learn evidence):
+
+| ID | Decision |
+|---|---|
+| D-14 | `totalPages` must equal ceil(`totalRecords` / 25) (empty dataset: 0 or 1 pages), otherwise `BadData` (502). No page cap or overall deadline. The originally approved second half (no page may hold more than 25 records) was removed after a live check showed the real API returns 26-record pages that carry a repeated record; the user approved the removal on 2026-11-20 ("please resolve the issue you introduced") |
+| D-15 | `decimal` overflow while totalling is `BadData` (502), caught at the endpoint around the aggregation. No maximum price |
+| D-16 | A rejected key (401/403) is logged at Error; other upstream failures stay at Warning |
+| D-17 | `BaseUrl` must be https unless it is a loopback address (`localhost`, `127.0.0.1`, `[::1]`); otherwise startup fails without printing the value |
+| D-18 | Not implemented by decision: no endpoint test for client cancellation (framework behaviour; cache cancellation is already tested) |
+
 ## 4. Layout
 
 - `src\InventoryAggregation.Core`: `InventoryRecord`, `CategorySummary`, `IInventoryRecordSource`, `InventoryAggregator`. Nothing HTTP-related.
@@ -159,7 +169,7 @@ Decisions added during implementation (all approved by the user; full wording is
 | 8, 10, 21, 23-25 | README review against the checklist | Manual | P1 |
 | 9, 10 | `EndpointTests.Returns200_WithSampleShape` (field names, `Z` dates) | Integration | P0 |
 | 11 | `EndpointTests.UpstreamFailure_ReturnsProblemDetails_NoInternals` for 502/503/504; unexpected exception gives 500 | Integration | P0 |
-| 12-15 | `DiTests.ResolvesServices`; build check | Smoke | P1 |
+| 12-15 | `EndpointTests.ServicesResolve_ThroughTheContainer`; build check | Smoke | P1 |
 | 16 | Core has no HTTP reference (project-reference check) | Structural | P0 |
 | 17 | `ConfigTests.MissingKey_FailsStartup`; manual check that no tracked file holds the key | Unit, manual | P0 |
 | 18 | `ClientTests`: 500 then success, retries exhausted, 429 with `Retry-After`, 400 and 401 not retried, timeout, `HttpRequestException`, malformed JSON, missing required field, cancellation | Unit | P0 |

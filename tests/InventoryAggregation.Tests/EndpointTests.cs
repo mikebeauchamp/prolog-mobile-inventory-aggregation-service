@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 
 namespace InventoryAggregation.Tests;
 
@@ -138,6 +139,55 @@ public class EndpointTests
         Assert.True(JsonNode.DeepEquals(JsonNode.Parse("""{"categories":[]}"""), JsonNode.Parse(await response.Content.ReadAsStringAsync())));
     }
 
+    [Fact]
+    public async Task ValuesTooLargeToTotal_Return502_NotAnUnhandled500()
+    {
+        // price x quantity exceeds the decimal range, which throws OverflowException inside the aggregator.
+        using var factory = Factory(Returns(Rec(1, price: decimal.MaxValue, quantity: 2)));
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(Route);
+
+        Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("Overflow", body);
+    }
+
+    [Fact]
+    public async Task SumTooLargeToTotal_Return502()
+    {
+        var half = decimal.MaxValue / 2 + 1;
+        using var factory = Factory(Returns(Rec(1, price: half), Rec(2, price: half)));
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(Route);
+
+        Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(InventorySourceFailureKind.Rejected, LogLevel.Error)]
+    [InlineData(InventorySourceFailureKind.Unavailable, LogLevel.Warning)]
+    [InlineData(InventorySourceFailureKind.Timeout, LogLevel.Warning)]
+    [InlineData(InventorySourceFailureKind.BadData, LogLevel.Warning)]
+    public async Task UpstreamFailure_IsLoggedAtTheExpectedLevel(InventorySourceFailureKind kind, LogLevel expected)
+    {
+        var logs = new CapturingLoggerProvider();
+        var throws = Throws(new InventorySourceException(kind, "x"));
+        using var factory = Factory(services =>
+        {
+            throws(services);
+            services.AddLogging(builder => builder.AddProvider(logs));
+        });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(Route);
+
+        var entry = Assert.Single(logs.Entries, e => e.Category == typeof(InventoryAggregator).FullName);
+        Assert.Equal(expected, entry.Level);
+    }
+
     [Theory]
     [InlineData(InventorySourceFailureKind.Unavailable, 503)]
     [InlineData(InventorySourceFailureKind.Timeout, 504)]
@@ -207,8 +257,7 @@ public class EndpointTests
         var handler = new ScriptedHandler((request, _) =>
         {
             var page = int.Parse(System.Web.HttpUtility.ParseQueryString(request.RequestUri!.Query)["page"]!);
-            return Steps.Ok(
-                $$"""{"records":[{"id":{{page}},"name":"P{{page}}","category":"Books","price":2.5,"quantity":4,"lastUpdated":"2026-10-15T12:30:00Z"}],"page":{{page}},"pageSize":25,"totalPages":2,"totalRecords":2}""")(request, CancellationToken.None);
+            return Steps.Ok(PageBodies.Books(page, totalRecords: 26))(request, CancellationToken.None);
         });
         using var factory = Factory(services => services.AddHttpClient<IInventoryPageClient, InventoryApiClient>()
             .ConfigurePrimaryHttpMessageHandler(() => handler));
@@ -222,8 +271,8 @@ public class EndpointTests
         using var doc = JsonDocument.Parse(first);
         var category = doc.RootElement.GetProperty("categories")[0];
         Assert.Equal("Books", category.GetProperty("category").GetString());
-        Assert.Equal(20m, category.GetProperty("totalInventoryValue").GetDecimal());
-        Assert.Equal(2, category.GetProperty("availableRecordCount").GetInt32());
+        Assert.Equal(260m, category.GetProperty("totalInventoryValue").GetDecimal());
+        Assert.Equal(26, category.GetProperty("availableRecordCount").GetInt32());
     }
 
     [Theory]

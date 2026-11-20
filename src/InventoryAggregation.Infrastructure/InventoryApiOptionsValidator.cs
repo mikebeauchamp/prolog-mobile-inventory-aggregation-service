@@ -14,6 +14,11 @@ internal sealed class InventoryApiOptionsValidator : IValidateOptions<InventoryA
         {
             failures.Add($"{InventoryApiOptions.SectionName}:{nameof(InventoryApiOptions.BaseUrl)} must be an absolute http or https URL.");
         }
+        else if (baseUrl.Scheme == Uri.UriSchemeHttp && !baseUrl.IsLoopback)
+        {
+            // The API key travels in a request header, so it must not cross a network in clear text (D-17).
+            failures.Add($"{InventoryApiOptions.SectionName}:{nameof(InventoryApiOptions.BaseUrl)} must use https unless it points to this machine.");
+        }
 
         if (string.IsNullOrWhiteSpace(options.ApiKey))
         {
