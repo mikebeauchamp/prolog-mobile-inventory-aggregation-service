@@ -67,7 +67,7 @@ Do not put the key in `appsettings*.json`. The files `.env`, `.env.*` and `secre
 dotnet run --project src\InventoryAggregation.Api --launch-profile http
 ```
 
-The app listens on `http://localhost:5261`. The launch profile may open a browser tab at `/`, which has no route and shows a 404. That is expected: call the endpoint below instead.
+The app listens on `http://localhost:5261`. `dotnet run` does not open a browser (it ignores `launchBrowser` in the launch profile), so open `http://localhost:5261/api/inventory/categories` yourself once the console says `Now listening`. The first load takes several seconds while the service fetches the whole dataset. The root path `/` has no route and returns 404. The launch profiles are set to open that endpoint for tools that honour `launchBrowser`, such as Visual Studio or `dotnet watch`.
 
 The first request fetches the whole dataset from the upstream API one page at a time, so a cold request can take several seconds (about 11 seconds in my one run against the real API). Later requests are served from an in-memory cache for 5 minutes.
 

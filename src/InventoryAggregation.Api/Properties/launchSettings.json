@@ -5,6 +5,7 @@
       "commandName": "Project",
       "dotnetRunMessages": true,
       "launchBrowser": true,
+      "launchUrl": "api/inventory/categories",
       "applicationUrl": "http://localhost:5261",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development"
@@ -14,6 +15,7 @@
       "commandName": "Project",
       "dotnetRunMessages": true,
       "launchBrowser": true,
+      "launchUrl": "api/inventory/categories",
       "applicationUrl": "https://localhost:7241;http://localhost:5261",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development"
